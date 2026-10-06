@@ -1,0 +1,20 @@
+[project]
+name = "trip-voice-agent-en"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "faiss-cpu>=1.15.1",
+    "fastembed>=0.8.1",
+    "faster-whisper>=1.2.1",
+    "kokoro-onnx>=0.6.1",
+    "langchain>=1.4.3",
+    "langchain-community>=0.4.2",
+    "langchain-groq>=1.1.3",
+    "langchain-text-splitters>=1.0.0",
+    "livekit-agents>=1.8.5",
+    "livekit-plugins-langchain>=1.8.5",
+    "livekit-plugins-silero>=1.8.5",
+    "numpy>=2.5.3",
+    "piper-tts>=1.8.0",
+    "python-dotenv>=1.2.4",
+]

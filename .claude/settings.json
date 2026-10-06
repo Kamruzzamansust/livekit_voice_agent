@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "livekit@livekit": true
+  }
+}

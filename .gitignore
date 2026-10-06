@@ -1,0 +1,6 @@
+.env
+.env.local
+.venv/
+__pycache__/
+models/
+vector_store/

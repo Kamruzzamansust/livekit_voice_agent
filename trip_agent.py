@@ -1,13 +1,16 @@
-"""LangChain agent (Groq LLM) that answers trip questions with RAG over FAISS.
+"""LangChain agent (Ollama, Groq or local llama.cpp LLM) that answers trip questions with RAG over FAISS.
 
 Retrieval runs before the LLM on every turn (see with_trip_context) instead of as a tool
 call: one LLM round trip per turn instead of two, which halves latency and token use.
 """
 
+import re
+from difflib import SequenceMatcher
+from functools import cache
+
 from langchain.agents import create_agent
 from langchain_community.vectorstores import FAISS
 from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_groq import ChatGroq
 
 import config
 from embeddings import get_embeddings
@@ -31,13 +34,25 @@ DESTINATION_KEYWORDS = {
     "Sylhet and Sunamganj": [
         "sylhet", "sunamganj", "tanguar", "haor", "jaflong", "ratargul", "lalakhal",
         "bisnakandi", "niladri", "tahirpur", "houseboat",
+        # Sunamganj and Bholaganj are both in this plan; speech recognition often garbles the
+        # first part ("Cholamganj") but keeps "ganj"
+        "ganj",
     ],
 }
+FUZZY_MIN_RATIO = 0.8  # "sunamgonj", "kulna", "shylet" match; "silhouette" (0.62) does not
 
 
 def destinations_in(text: str) -> set[str]:
     text = text.lower()
-    return {d for d, words in DESTINATION_KEYWORDS.items() if any(w in text for w in words)}
+    found = {d for d, words in DESTINATION_KEYWORDS.items() if any(w in text for w in words)}
+    if found:
+        return found
+    # Near-misses of single-word place names from speech recognition
+    for word in re.findall(r"[a-z]{5,}", text):
+        for destination, keywords in DESTINATION_KEYWORDS.items():
+            if any(" " not in k and SequenceMatcher(None, word, k).ratio() >= FUZZY_MIN_RATIO for k in keywords):
+                found.add(destination)
+    return found
 
 
 def search_trip_plans(query: str, destinations: set[str] | None = None) -> str:
@@ -79,8 +94,10 @@ You always speak English.
 RULES:
 - The latest user message starts with <trip_notes> retrieved from the trip plans. Answer only from
   those notes and the earlier conversation. The user cannot see the notes; never mention them.
-- The user's words come from speech recognition and may be misheard (for example "Tungor" for
-  Tanguar Haor). Guess the intended question from context.
+- The user's words come from speech recognition and may be misheard: "Tungor" for Tanguar Haor,
+  "Cholamganj" for Sunamganj, "select" or "silet" for Sylhet. Guess the intended place from
+  context; if you can't, ask "Did you mean ...?" naming the closest of the three trips.
+  Never just say you have no information about a place that sounds like one of them.
 - If the notes do not cover the question, say so honestly. Never invent prices, schedules or rules.
 - Prices are approximate and in Bangladeshi taka; say "taka", not "BDT".
 - Remind the user to check current rules when talking about Saint Martin's access or forest permits.
@@ -93,11 +110,53 @@ VOICE STYLE:
   everything at once."""
 
 
-llm = ChatGroq(
-    model=config.GROQ_MODEL,
-    temperature=0.3,
-    reasoning_effort=config.GROQ_REASONING_EFFORT or None,
-)
+@cache
+def ollama_capabilities() -> frozenset[str]:
+    """What the configured Ollama model supports, e.g. {"completion", "tools", "thinking"}."""
+    import ollama
+
+    info = ollama.Client(host=config.OLLAMA_BASE_URL, timeout=10).show(config.OLLAMA_MODEL)
+    return frozenset(info.capabilities or [])
+
+
+def make_llm(max_tokens: int = config.LLM_MAX_TOKENS):
+    if config.LLM_BACKEND == "groq":
+        from langchain_groq import ChatGroq
+
+        return ChatGroq(
+            model=config.GROQ_MODEL,
+            temperature=0.3,
+            max_tokens=max_tokens,
+            reasoning_effort=config.GROQ_REASONING_EFFORT or None,
+        )
+
+    if config.LLM_BACKEND == "ollama":
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            model=config.OLLAMA_MODEL,
+            base_url=config.OLLAMA_BASE_URL,
+            temperature=0.3,
+            num_predict=max_tokens,
+            keep_alive=config.OLLAMA_KEEP_ALIVE,
+            # Thinking models (gemma4, qwen3) would think before every spoken reply; models
+            # without a thinking mode need the setting left out, or Ollama rejects the request
+            reasoning=False if "thinking" in ollama_capabilities() else None,
+        )
+
+    from langchain_openai import ChatOpenAI
+
+    # llama_cpp.server speaks the OpenAI API and serves whichever model it was started with
+    return ChatOpenAI(
+        base_url=config.LOCAL_LLM_URL,
+        api_key=config.LOCAL_LLM_API_KEY or "missing-LOCAL_LLM_API_KEY",
+        model=config.LOCAL_LLM_PATH.stem,
+        temperature=0.3,
+        max_tokens=max_tokens,
+    )
+
+
+llm = make_llm()
 
 trip_agent = create_agent(model=llm, tools=[], system_prompt=SYSTEM_PROMPT)
 

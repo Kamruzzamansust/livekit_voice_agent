@@ -24,8 +24,12 @@ KOKORO_SAMPLE_RATE = 24000
 PLACE_NAMES_PROMPT = (
     "Trip to Saint Martin, Cox's Bazar, Teknaf, Chhera Dwip, Khulna, Sundarbans, Bagerhat, "
     "Kotka, Karamjal, Mongla, Sylhet, Sunamganj, Tanguar Haor, Jaflong, Ratargul, Lalakhal, "
-    "Bisnakandi, Niladri Lake, Tahirpur, houseboat, taka."
+    "Bisnakandi, Niladri Lake, Tahirpur, houseboat, taka. What are the must-try foods?"
 )
+
+
+# Biases decoding toward these words (initial_prompt alone still let "Sylhet" become "select")
+HOTWORDS = "Sylhet Sunamganj Sundarbans Tanguar Haor Khulna Ratargul Jaflong Tahirpur Saint Martin"
 
 
 class WhisperSTT(stt.STT):
@@ -64,6 +68,7 @@ class WhisperSTT(stt.STT):
             beam_size=1,
             vad_filter=False,  # Silero VAD already trimmed the audio
             initial_prompt=PLACE_NAMES_PROMPT,
+            hotwords=HOTWORDS,
             # Short single-utterance clips: skip timestamp decoding and cross-window context
             without_timestamps=True,
             condition_on_previous_text=False,
